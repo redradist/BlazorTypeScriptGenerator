@@ -35,7 +35,9 @@ class TSNode {
                 .map(child => child.getObject())
                 .reduce((pv, child) => {
                     for (let key in child) {
-                        if (pv.hasOwnProperty(key) || key in pv) {
+                        let first = pv.hasOwnProperty(key);
+                        let second = key in pv;
+                        if ((pv.hasOwnProperty(key) || (key in pv)) && pv[key]) {
                             (<any>Object).assign(pv[key], child[key]);
                         } else {
                             pv[key] = child[key];
