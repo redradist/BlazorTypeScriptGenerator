@@ -62,7 +62,7 @@ function visit(prefix: string) {
         switch (node.kind) {
             case ts.SyntaxKind.ModuleDeclaration: {
                 let moduleName = node.name.text;
-                ts.forEachChild(node, visit(prefix + moduleName));
+                ts.forEachChild(node, visit(moduleName + "."));
             }
                 break;
             case ts.SyntaxKind.ModuleBlock: {
@@ -157,9 +157,22 @@ function appendTypedPropertyToJson(json: any, propertyNode: any) {
     json[realPropertyName] = realPropertyType;
 }
 
-function generate(fullName: string, tsNode: any) {
-    let namespaceName = '';
+function generate(context: any, fullName: string, tsNode: any) {
     let objectName = tsNode.name.escapedText;
+    let namespaceName = '';
+    let complexName = fullName.split(".");
+    if (complexName.length > 1) {
+        namespaceName = complexName.slice(0, complexName.length-1).join('.');
+    }
+    if (context.hasOwnProperty(fullName)) {
+        return;
+    }
+    if (tsNode.heritageClauses) {
+        for (const hr of tsNode.heritageClauses) {
+            console.log(`hr is ${hr}`);
+        }
+    }
+
     let typedPropertiesJson = {};
     ts.forEachChild(tsNode, (node: any) => appendTypedPropertyToJson(typedPropertiesJson, node));
     let genObj = nunjucks.render(`BrowserInteropObject.cs`, {
@@ -175,6 +188,7 @@ function generate(fullName: string, tsNode: any) {
         }
         console.log(data);
     });
+    context[fullName] = true;
 }
 
 export default function(filename: string, options: any) {
@@ -197,8 +211,9 @@ export default function(filename: string, options: any) {
 
     nunjucks.configure('templates', { autoescape: true });
 
+    let context = {};
     // @ts-ignore
     ts.forEachChild(sourceFile, visit(ROOT_PREFIX));
-    generate('Account', complexObjectMap.get('Account'))
+    generate(context, 'AesDerivedKeyParams', complexObjectMap.get('AesDerivedKeyParams'))
     Object.assign({}, complexObjectMap);
 }
