@@ -9,8 +9,7 @@ function main() {
     if (!file_name.endsWith(".d.ts")) {
         throw new Error(`File name should have *.d.ts extension instead of ${file_ext}`);
     }
-    let json = ts2cs.default(file_name, {});
-    console.log(`json is ${JSON.stringify(json)}`);
+    ts2cs.default(file_name, {});
 }
 
 main();

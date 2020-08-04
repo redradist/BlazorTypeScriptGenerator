@@ -3,63 +3,21 @@ import nunjucks from "nunjucks";
 import fs from "fs";
 
 
-class TSNode {
-    private _children: any[];
-    private name: any;
-    private type: any;
-
-    constructor(name: any, type?: any) {
-        this.name = name;
-        this.type = type;
-        this._children = [];
-    }
-
-    public addChildren(name: any, type: any): TSNode {
-        let node = new TSNode(name, type);
-        this._children.push(node);
-        return node;
-    }
-
-    get children() {
-        return this._children;
-    }
-
-    private getType() {
-        return this.type;
-    }
-
-    public getObject() {
-        let map: any = {};
-        if (this.children.length) {
-            map[this.name] = this.children
-                .map(child => child.getObject())
-                .reduce((pv, child) => {
-                    for (let key in child) {
-                        if ((pv.hasOwnProperty(key) || (key in pv)) && pv[key]) {
-                            console.log(`pv[key] is ${pv[key]}`);
-                            console.log(`child[key] is ${child[key]}`);
-                            try {
-                                (<any>Object).assign(pv[key], child[key]);
-                            } catch (e) {
-                            }
-                        } else {
-                            pv[key] = child[key];
-                        }
-                    }
-                    return pv;
-                }, {});
-        } else {
-            map[this.name] = this.type;
-        }
-        return map;
-    }
-}
-
+let declObjectMap = new Set();
 let complexObjectMap = new Map();
 
 function visit(prefix: string) {
     return function(node: any) {
         switch (node.kind) {
+            case ts.SyntaxKind.VariableDeclaration: {
+                ts.forEachChild(node, visit(prefix));
+            }
+                break;
+            case ts.SyntaxKind.VarKeyword: {
+                let varName = node.name.text;
+                declObjectMap.add(varName);
+            }
+                break;
             case ts.SyntaxKind.ModuleDeclaration: {
                 let moduleName = node.name.text;
                 ts.forEachChild(node, visit(moduleName + "."));
@@ -109,7 +67,24 @@ function visit(prefix: string) {
     };
 }
 
-function appendTypedPropertyToJson(json: any, propertyNode: any) {
+function getNodeModifiers(propertyNode: any) {
+    let isReadonly = false;
+    if (propertyNode.modifiers) {
+        for (let modifier of propertyNode.modifiers) {
+            switch (modifier.kind) {
+                case ts.SyntaxKind.ReadonlyKeyword: {
+                    isReadonly = true;
+                }
+                    break;
+            }
+        }
+    }
+    return {
+        isReadonly
+    };
+}
+
+function appendTypedPropertyToJson(context: any, json: any, propertyNode: any) {
     let propertyName = propertyNode.name;
     if (propertyName === undefined) {
         return;
@@ -149,12 +124,29 @@ function appendTypedPropertyToJson(json: any, propertyNode: any) {
                 realPropertyType = "bool";
             }
                 break;
-        }
-        if (propertyNode.questionToken) {
-            realPropertyType += "?";
+            case ts.SyntaxKind.VoidKeyword: {
+                if (propertyNode.kind === ts.SyntaxKind.MethodSignature) {
+                    realPropertyType = "void";
+                }
+            }
+                break;
         }
     }
-    json[realPropertyName] = realPropertyType;
+    if (realPropertyType === undefined) {
+        if (propertyType.kind === ts.SyntaxKind.TypeReference) {
+            realPropertyType = propertyType.typeName.getText();
+            generate(context, realPropertyType, complexObjectMap.get(realPropertyType));
+        }
+    }
+    if (propertyNode.questionToken) {
+        realPropertyType += "?";
+    }
+    let { isReadonly } = getNodeModifiers(propertyNode);
+    json[realPropertyName] = {
+        type: realPropertyType,
+        isReadonly: isReadonly,
+        isMethod: propertyNode.kind === ts.SyntaxKind.MethodSignature,
+    };
 }
 
 function generate(context: any, fullName: string, tsNode: any) {
@@ -167,16 +159,25 @@ function generate(context: any, fullName: string, tsNode: any) {
     if (context.hasOwnProperty(fullName)) {
         return;
     }
+    let extendedClasses;
     if (tsNode.heritageClauses) {
         for (const hr of tsNode.heritageClauses) {
-            console.log(`hr is ${hr}`);
+            let regEx = /t(\$|\_|\w|\.)*/g;
+            extendedClasses = hr.getText().split(" ").slice(1);
+            extendedClasses.forEach(function(part: any, index: any, theArray: any) {
+                theArray[index] = theArray[index].replace(",", "");
+            });
+            for (let cls of extendedClasses) {
+                generate(context, cls, complexObjectMap.get(cls));
+            }
         }
     }
 
     let typedPropertiesJson = {};
-    ts.forEachChild(tsNode, (node: any) => appendTypedPropertyToJson(typedPropertiesJson, node));
-    let genObj = nunjucks.render(`BrowserInteropObject.cs`, {
-        browserInteropApi: namespaceName,
+    ts.forEachChild(tsNode, (node: any) => appendTypedPropertyToJson(context, typedPropertiesJson, node));
+    let genObj = nunjucks.render(`BlazorBrowserObject.cs`, {
+        objectNamespace: namespaceName,
+        extendedClasses: extendedClasses,
         objectName: objectName,
         properties: typedPropertiesJson
     });
@@ -214,6 +215,6 @@ export default function(filename: string, options: any) {
     let context = {};
     // @ts-ignore
     ts.forEachChild(sourceFile, visit(ROOT_PREFIX));
-    generate(context, 'AesDerivedKeyParams', complexObjectMap.get('AesDerivedKeyParams'))
+    generate(context, 'AbortController', complexObjectMap.get('AbortController'))
     Object.assign({}, complexObjectMap);
 }
