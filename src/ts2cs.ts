@@ -1,6 +1,7 @@
 import * as ts from 'typescript';
 import nunjucks from "nunjucks";
 import fs from "fs";
+import {isPrimitive} from "util";
 
 let complexObjectMap = new Map();
 let declObjectMap = new Map();
@@ -70,8 +71,17 @@ function visit(prefix: string) {
     };
 }
 
+function isPrimitiveType(type: any) {
+    return type.typeName?.escapedText === "boolean" ||
+           type.typeName?.escapedText === "number" ||
+           type.typeName?.escapedText === "bigint" ||
+           type.typeName?.escapedText === "string" ||
+           type.typeName?.escapedText === "symbol";
+}
+
 function getNodeModifiers(propertyNode: any) {
     let isReadonly = false;
+    let isRefType = false;
     if (propertyNode.modifiers) {
         for (let modifier of propertyNode.modifiers) {
             switch (modifier.kind) {
@@ -81,9 +91,13 @@ function getNodeModifiers(propertyNode: any) {
                     break;
             }
         }
+        if (propertyNode.type) {
+            isRefType = !isPrimitiveType(propertyNode.type);
+        }
     }
     return {
-        isReadonly
+        isReadonly,
+        isRefType,
     };
 }
 
@@ -166,10 +180,11 @@ function appendTypedPropertyToJson(context: any, json: any, propertyNode: any) {
     if (propertyNode.questionToken) {
         realPropertyType += "?";
     }
-    let { isReadonly } = getNodeModifiers(propertyNode);
+    let { isReadonly, isRefType } = getNodeModifiers(propertyNode);
     json[realPropertyName] = {
         type: realPropertyType,
         isReadonly: isReadonly,
+        isRefType: isRefType,
         isMethod: propertyNode.kind === ts.SyntaxKind.MethodSignature,
     };
 }
@@ -243,7 +258,7 @@ export default function(filename: string, options: any) {
         let context = {};
         ts.forEachChild(domSourceFile!, visit(ROOT_PREFIX));
         ts.forEachChild(promiseSourceFile!, visit(ROOT_PREFIX));
-        generate(context, 'Window', retrieveObject('Window'))
+        generate(context, 'AbortController', retrieveObject('AbortController'))
         Object.assign({}, complexObjectMap);
     }
 }
