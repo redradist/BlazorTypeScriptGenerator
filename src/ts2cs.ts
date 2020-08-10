@@ -2,8 +2,7 @@ import * as ts from 'typescript';
 import nunjucks from "nunjucks";
 import fs from "fs";
 
-
-let declObjectMap = new Set();
+let declObjectMap = new Map();
 let complexObjectMap = new Map();
 
 function visit(prefix: string) {
@@ -11,11 +10,15 @@ function visit(prefix: string) {
         switch (node.kind) {
             case ts.SyntaxKind.VariableDeclaration: {
                 ts.forEachChild(node, visit(prefix));
+                Symbol.isConcatSpreadable
             }
                 break;
-            case ts.SyntaxKind.VarKeyword: {
-                let varName = node.name.text;
-                declObjectMap.add(varName);
+            case ts.SyntaxKind.VariableStatement: {
+                if (node.declarationList?.declarations) {
+                    for (let decl of node.declarationList.declarations) {
+                        declObjectMap.set(decl.name.escapedText, node);
+                    }
+                }
             }
                 break;
             case ts.SyntaxKind.ModuleDeclaration: {
@@ -125,8 +128,30 @@ function appendTypedPropertyToJson(context: any, json: any, propertyNode: any) {
             }
                 break;
             case ts.SyntaxKind.VoidKeyword: {
-                if (propertyNode.kind === ts.SyntaxKind.MethodSignature) {
-                    realPropertyType = "void";
+                realPropertyType = "void";
+            }
+                break;
+            case ts.SyntaxKind.AnyKeyword: {
+                realPropertyType = "JSRuntimeObjectRef";
+            }
+                break;
+            case ts.SyntaxKind.UnionType: {
+                let isNull = false;
+                realPropertyType = "";
+                for (let type of propertyType.types) {
+                    if (type.typeName !== undefined) {
+                        realPropertyType += type.typeName.escapedText;
+                    } else if (type.kind !== undefined) {
+                        switch (type.kind) {
+                            case ts.SyntaxKind.NullKeyword: {
+                                isNull = true;
+                            }
+                                break;
+                        }
+                    }
+                }
+                if (isNull) {
+                    realPropertyType += "?";
                 }
             }
                 break;
@@ -199,7 +224,7 @@ export default function(filename: string, options: any) {
     let program = ts.createProgram([filename], options);
     let checker = program.getTypeChecker();
     let sourceFiles = program.getSourceFiles();
-    var sourceFile;
+    let sourceFile: ts.SourceFile | null = null;
     for (let file of sourceFiles) {
         let flName = file.fileName;
         let lastIndex = flName.lastIndexOf('/');
@@ -210,11 +235,12 @@ export default function(filename: string, options: any) {
         }
     }
 
-    nunjucks.configure('templates', { autoescape: true });
+    if (sourceFile) {
+        nunjucks.configure('templates', { autoescape: true });
 
-    let context = {};
-    // @ts-ignore
-    ts.forEachChild(sourceFile, visit(ROOT_PREFIX));
-    generate(context, 'AbortController', complexObjectMap.get('AbortController'))
-    Object.assign({}, complexObjectMap);
+        let context = {};
+        ts.forEachChild(sourceFile, visit(ROOT_PREFIX));
+        generate(context, 'GamepadPose', complexObjectMap.get('GamepadPose'))
+        Object.assign({}, complexObjectMap);
+    }
 }

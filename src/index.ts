@@ -2,6 +2,11 @@ import * as ts2cs from "./ts2cs";
 import path from 'path';
 
 
+namespace asfassasf2 {
+
+}
+
+
 function main() {
     // @ts-ignore
     let file_name = process.argv[2];
