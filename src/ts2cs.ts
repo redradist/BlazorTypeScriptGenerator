@@ -2,15 +2,25 @@ import * as ts from 'typescript';
 import nunjucks from "nunjucks";
 import fs from "fs";
 
-let declObjectMap = new Map();
 let complexObjectMap = new Map();
+let declObjectMap = new Map();
+
+function retrieveObject(name: string) {
+    let complexObject = complexObjectMap.get(name);
+    let declObject = declObjectMap.get(name);
+    if (complexObject) {
+        return complexObject;
+    } else if (declObject) {
+        declObject = declObject.declarationList.declarations[0];
+        return complexObjectMap.get(declObject.type.typeName.escapedText);
+    }
+}
 
 function visit(prefix: string) {
     return function(node: any) {
         switch (node.kind) {
             case ts.SyntaxKind.VariableDeclaration: {
                 ts.forEachChild(node, visit(prefix));
-                Symbol.isConcatSpreadable
             }
                 break;
             case ts.SyntaxKind.VariableStatement: {
@@ -30,6 +40,11 @@ function visit(prefix: string) {
                 ts.forEachChild(node, visit(prefix));
             }
                 break;
+            case ts.SyntaxKind.TypeAliasDeclaration: {
+                let typeAliasName = node.name.text;
+                complexObjectMap.set(prefix + typeAliasName, node);
+            }
+                break;
             case ts.SyntaxKind.InterfaceDeclaration: {
                 let interfaceName = node.name.text;
                 complexObjectMap.set(prefix + interfaceName, node);
@@ -47,21 +62,6 @@ function visit(prefix: string) {
                     arrayDeep++;
                     propertyType = propertyType.elementType;
                 }
-                // if (propertyType.kind === ts.SyntaxKind.TypeReference) {
-                //     let realPropertyType = propertyType.typeName;
-                //     parent.addChildren(
-                //         realPropertyName,
-                //         'Array<'.repeat(arrayDeep) +
-                //         (realPropertyType.kind === ts.SyntaxKind.QualifiedName
-                //             ? realPropertyType.getText()
-                //             : 'text' in realPropertyType
-                //                 ? realPropertyType.text
-                //                 : realPropertyType) +
-                //         '>'.repeat(arrayDeep)
-                //     );
-                // } else {
-                //     parent.addChildren(realPropertyName, propertyType.kind);
-                // }
             }
                 break;
             default:
@@ -106,7 +106,7 @@ function appendTypedPropertyToJson(context: any, json: any, propertyNode: any) {
     }
     if (propertyType.kind === ts.SyntaxKind.TypeReference) {
         let realPropertyType = propertyType.typeName;
-        realPropertyType = 'Array<'.repeat(arrayDeep) +
+        realPropertyType = 'List<'.repeat(arrayDeep) +
         (realPropertyType.kind === ts.SyntaxKind.QualifiedName
             ? realPropertyType.getText()
             : 'text' in realPropertyType
@@ -160,7 +160,7 @@ function appendTypedPropertyToJson(context: any, json: any, propertyNode: any) {
     if (realPropertyType === undefined) {
         if (propertyType.kind === ts.SyntaxKind.TypeReference) {
             realPropertyType = propertyType.typeName.getText();
-            generate(context, realPropertyType, complexObjectMap.get(realPropertyType));
+            generate(context, realPropertyType, retrieveObject(realPropertyType));
         }
     }
     if (propertyNode.questionToken) {
@@ -193,7 +193,7 @@ function generate(context: any, fullName: string, tsNode: any) {
                 theArray[index] = theArray[index].replace(",", "");
             });
             for (let cls of extendedClasses) {
-                generate(context, cls, complexObjectMap.get(cls));
+                generate(context, cls, retrieveObject(cls));
             }
         }
     }
@@ -224,23 +224,26 @@ export default function(filename: string, options: any) {
     let program = ts.createProgram([filename], options);
     let checker = program.getTypeChecker();
     let sourceFiles = program.getSourceFiles();
-    let sourceFile: ts.SourceFile | null = null;
+    let domSourceFile: ts.SourceFile | null = null;
+    let promiseSourceFile: ts.SourceFile | null = null;
     for (let file of sourceFiles) {
         let flName = file.fileName;
         let lastIndex = flName.lastIndexOf('/');
         let fl = flName.slice(lastIndex+1);
         if (fl === fileName) {
-            sourceFile = file;
-            break;
+            domSourceFile = file;
+        } else if (fl === 'lib.es2015.promise.d.ts') {
+            promiseSourceFile = file;
         }
     }
 
-    if (sourceFile) {
+    if (domSourceFile) {
         nunjucks.configure('templates', { autoescape: true });
 
         let context = {};
-        ts.forEachChild(sourceFile, visit(ROOT_PREFIX));
-        generate(context, 'GamepadPose', complexObjectMap.get('GamepadPose'))
+        ts.forEachChild(domSourceFile!, visit(ROOT_PREFIX));
+        ts.forEachChild(promiseSourceFile!, visit(ROOT_PREFIX));
+        generate(context, 'Window', retrieveObject('Window'))
         Object.assign({}, complexObjectMap);
     }
 }
