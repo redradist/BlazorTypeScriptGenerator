@@ -218,7 +218,6 @@ function generate(context: any, fullName: string | null) {
         }
 
         isGenerating = true;
-        let objectName = tsNode.name.escapedText;
         let namespaceName = '';
         let complexName = fullName.split(".");
         if (complexName.length > 1) {
@@ -246,14 +245,14 @@ function generate(context: any, fullName: string | null) {
         let genObj = nunjucks.render(`BlazorBrowserObject.cs`, {
             objectNamespace: namespaceName,
             extendedClasses: extendedClasses,
-            objectName: objectName,
+            objectName: fullName,
             properties: typedPropertiesJson
         });
         console.log(`genObj is ${genObj}`);
         // @ts-ignore
-        fs.writeFile(`./gen_dir/${objectName}.cs`, genObj, function (err: any, data: any) {
+        fs.writeFile(`./gen_dir/${fullName}.cs`, genObj, function (err: any, data: any) {
             if (err) {
-                return console.error(`response: ./gen_dir/${objectName}.cs, err: ${err}`);
+                return console.error(`response: ./gen_dir/${fullName}.cs, err: ${err}`);
             }
         });
         context[fullName] = true;
@@ -289,7 +288,7 @@ export default function(filename: string, options: any) {
         let context = {};
         ts.forEachChild(domSourceFile!, visit(ROOT_PREFIX));
         ts.forEachChild(promiseSourceFile!, visit(ROOT_PREFIX));
-        generate(context, 'Request')
+        generate(context, 'Promise')
         Object.assign({}, declObjMap);
     }
 }
