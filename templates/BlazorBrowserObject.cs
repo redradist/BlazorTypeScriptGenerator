@@ -20,8 +20,8 @@ namespace BlazorBrowser{% if objectNamespace %}.{% endif %}{{objectNamespace}}
             JSRuntime = jsRuntime;
             JSObjectRef = jsObjectRef;
         }
-{% for prop_name, prop_info in properties %}
-    {%- if prop_info.isMethod %}
+{%- for prop_name, prop_info in properties %}
+    {% if prop_info.isMethod %}
         {%- if prop_info.type == "void" %}
         public ValueTask {{ prop_name[0].toUpperCase() + prop_name.slice(1) }}Async()
         {%- else %}
@@ -35,21 +35,18 @@ namespace BlazorBrowser{% if objectNamespace %}.{% endif %}{{objectNamespace}}
             {%- endif %}
         }
     {%- else %}
-        {%- if prop_info.isRefType %}
-        public ValueTask<JSRuntimeObjectRef> Get{{ prop_name[0].toUpperCase() + prop_name.slice(1) }}Async()
-        {%- else %}
         public ValueTask<{{ prop_info.type }}> Get{{ prop_name[0].toUpperCase() + prop_name.slice(1) }}Async()
-        {%- endif %}
         {
             return JSRuntime.InvokeAsync<{{ prop_info.type }}>("blazorBrowser.getInstanceProperty", JSObjectRef, "{{ prop_name }}");
         }
-        {% if not prop_info.isReadonly -%}
+        {%- if not prop_info.isReadonly %}
+
         public ValueTask Set{{ prop_name[0].toUpperCase() + prop_name.slice(1) }}Async({{ prop_info.type }} value)
         {
             return JSRuntime.InvokeVoidAsync("blazorBrowser.setInstanceProperty", JSObjectRef, "{{ prop_name }}", value);
         }
-        {% endif -%}
-    {% endif -%}
+        {%- endif %}
+    {%- endif %}
 {%- endfor %}
     }
 }
