@@ -3,18 +3,27 @@ import nunjucks from "nunjucks";
 import fs from "fs";
 import {isPrimitive} from "util";
 
-let complexObjectMap = new Map();
-let declObjectMap = new Map();
+let declObjMap = new Map();
+let declVarMap = new Map();
 
 function retrieveObject(name: string) {
-    let complexObject = complexObjectMap.get(name);
-    let declObject = declObjectMap.get(name);
-    if (complexObject) {
-        return complexObject;
-    } else if (declObject) {
-        declObject = declObject.declarationList.declarations[0];
-        return complexObjectMap.get(declObject.type.typeName.escapedText);
+    let declObj = undefined;
+    let declVar = declVarMap.get(name);
+    if (declVar) {
+        declVar = declVar.declarationList.declarations[0];
+        if (declVar.type?.typeName) {
+            declObj = declObjMap.get(declVar.type.typeName.escapedText);
+        } else if (declVar.type?.members) {
+            for (let member of declVar.type.members) {
+                if (member.symbol.escapedName === "prototype") {
+                    declObj = declObjMap.get(member.type.typeName.escapedText);
+                }
+            }
+        }
+    } else {
+        declObj = declObjMap.get(name);
     }
+    return declObj;
 }
 
 function visit(prefix: string) {
@@ -27,7 +36,7 @@ function visit(prefix: string) {
             case ts.SyntaxKind.VariableStatement: {
                 if (node.declarationList?.declarations) {
                     for (let decl of node.declarationList.declarations) {
-                        declObjectMap.set(decl.name.escapedText, node);
+                        declVarMap.set(decl.name.escapedText, node);
                     }
                 }
             }
@@ -43,12 +52,12 @@ function visit(prefix: string) {
                 break;
             case ts.SyntaxKind.TypeAliasDeclaration: {
                 let typeAliasName = node.name.text;
-                complexObjectMap.set(prefix + typeAliasName, node);
+                declObjMap.set(prefix + typeAliasName, node);
             }
                 break;
             case ts.SyntaxKind.InterfaceDeclaration: {
                 let interfaceName = node.name.text;
-                complexObjectMap.set(prefix + interfaceName, node);
+                declObjMap.set(prefix + interfaceName, node);
             }
                 break;
             case ts.SyntaxKind.PropertySignature: {
@@ -174,7 +183,7 @@ function appendTypedPropertyToJson(context: any, json: any, propertyNode: any) {
     if (realPropertyType === undefined) {
         if (propertyType.kind === ts.SyntaxKind.TypeReference) {
             realPropertyType = propertyType.typeName.getText();
-            generate(context, realPropertyType, retrieveObject(realPropertyType));
+            generate(context, realPropertyType);
         }
     }
     if (propertyNode.questionToken) {
@@ -189,47 +198,68 @@ function appendTypedPropertyToJson(context: any, json: any, propertyNode: any) {
     };
 }
 
-function generate(context: any, fullName: string, tsNode: any) {
-    let objectName = tsNode.name.escapedText;
-    let namespaceName = '';
-    let complexName = fullName.split(".");
-    if (complexName.length > 1) {
-        namespaceName = complexName.slice(0, complexName.length-1).join('.');
-    }
-    if (context.hasOwnProperty(fullName)) {
-        return;
-    }
-    let extendedClasses;
-    if (tsNode.heritageClauses) {
-        for (const hr of tsNode.heritageClauses) {
-            let regEx = /t(\$|\_|\w|\.)*/g;
-            extendedClasses = hr.getText().split(" ").slice(1);
-            extendedClasses.forEach(function(part: any, index: any, theArray: any) {
-                theArray[index] = theArray[index].replace(",", "");
-            });
-            for (let cls of extendedClasses) {
-                generate(context, cls, retrieveObject(cls));
+let isGenerating = false;
+let nextToGenerate = new Array();
+
+function generate(context: any, fullName: string | null) {
+    while (fullName) {
+        let tsNode = retrieveObject(fullName!);
+        if (!tsNode) {
+            if (nextToGenerate.length > 0) {
+                fullName = nextToGenerate.shift();
+                continue;
+            } else {
+                return;
             }
         }
-    }
-
-    let typedPropertiesJson = {};
-    ts.forEachChild(tsNode, (node: any) => appendTypedPropertyToJson(context, typedPropertiesJson, node));
-    let genObj = nunjucks.render(`BlazorBrowserObject.cs`, {
-        objectNamespace: namespaceName,
-        extendedClasses: extendedClasses,
-        objectName: objectName,
-        properties: typedPropertiesJson
-    });
-    console.log(`genObj is ${genObj}`);
-    // @ts-ignore
-    fs.writeFile(`./gen_dir/${objectName}.cs`, genObj, function (err: any, data: any) {
-        if (err) {
-            return console.log(err);
+        if (isGenerating) {
+            nextToGenerate.push(fullName);
+            return;
         }
-        console.log(data);
-    });
-    context[fullName] = true;
+
+        isGenerating = true;
+        let objectName = tsNode.name.escapedText;
+        let namespaceName = '';
+        let complexName = fullName.split(".");
+        if (complexName.length > 1) {
+            namespaceName = complexName.slice(0, complexName.length-1).join('.');
+        }
+        if (context.hasOwnProperty(fullName)) {
+            return;
+        }
+        let extendedClasses;
+        if (tsNode.heritageClauses) {
+            for (const hr of tsNode.heritageClauses) {
+                let regEx = /t(\$|\_|\w|\.)*/g;
+                extendedClasses = hr.getText().split(" ").slice(1);
+                extendedClasses.forEach(function(part: any, index: any, theArray: any) {
+                    theArray[index] = theArray[index].replace(",", "");
+                });
+                for (let cls of extendedClasses) {
+                    generate(context, cls);
+                }
+            }
+        }
+
+        let typedPropertiesJson = {};
+        ts.forEachChild(tsNode, (node: any) => appendTypedPropertyToJson(context, typedPropertiesJson, node));
+        let genObj = nunjucks.render(`BlazorBrowserObject.cs`, {
+            objectNamespace: namespaceName,
+            extendedClasses: extendedClasses,
+            objectName: objectName,
+            properties: typedPropertiesJson
+        });
+        console.log(`genObj is ${genObj}`);
+        // @ts-ignore
+        fs.writeFile(`./gen_dir/${objectName}.cs`, genObj, function (err: any, data: any) {
+            if (err) {
+                return console.error(`response: ./gen_dir/${objectName}.cs, err: ${err}`);
+            }
+        });
+        context[fullName] = true;
+        isGenerating = false;
+        fullName = nextToGenerate.shift();
+    }
 }
 
 export default function(filename: string, options: any) {
@@ -247,6 +277,7 @@ export default function(filename: string, options: any) {
         let fl = flName.slice(lastIndex+1);
         if (fl === fileName) {
             domSourceFile = file;
+            'lib.dom.d.ts'
         } else if (fl === 'lib.es2015.promise.d.ts') {
             promiseSourceFile = file;
         }
@@ -258,7 +289,7 @@ export default function(filename: string, options: any) {
         let context = {};
         ts.forEachChild(domSourceFile!, visit(ROOT_PREFIX));
         ts.forEachChild(promiseSourceFile!, visit(ROOT_PREFIX));
-        generate(context, 'AbortController', retrieveObject('AbortController'))
-        Object.assign({}, complexObjectMap);
+        generate(context, 'Request')
+        Object.assign({}, declObjMap);
     }
 }
